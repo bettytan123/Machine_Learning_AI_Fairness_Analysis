@@ -1,0 +1,159 @@
+! pip install fairlearn --quiet
+ ! pip install 'aif360[all]' --quiet
+ ! pip install matplotlib==3.1.3 --quiet
+
+ ! Rscript /usr/local/lib/python3.8/dist-packages/aif360/data/raw/meps/generate_data.R
+
+ ! mv h181.csv /usr/local/lib/python3.8/dist-packages/aif360/data/raw/meps/h181.csv
+ ! mv h192.csv /usr/local/lib/python3.8/dist-packages/aif360/data/raw/meps/h192.csv
+ 
+ import sys
+sys.path.insert(0, '../')
+
+%matplotlib inline
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from IPython.display import Markdown, display
+
+# Datasets
+from aif360.datasets import MEPSDataset19
+from aif360.datasets import MEPSDataset20
+from aif360.datasets import MEPSDataset21
+
+# Fairness metrics
+from aif360.metrics import BinaryLabelDatasetMetric
+from aif360.metrics import ClassificationMetric
+
+# Explainers
+from aif360.explainers import MetricTextExplainer
+
+# Scalers
+from sklearn.preprocessing import StandardScaler
+
+# Classifiers
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import accuracy_score, precision_score
+from sklearn.tree import DecisionTreeClassifier
+
+# Bias mitigation techniques
+from aif360.algorithms.preprocessing import Reweighing, DisparateImpactRemover
+from aif360.algorithms.inprocessing import PrejudiceRemover
+
+# LIME
+from aif360.datasets.lime_encoder import LimeEncoder
+import lime
+from lime.lime_tabular import LimeTabularExplainer
+
+# Fairlearn
+from fairlearn.metrics import MetricFrame
+from fairlearn.metrics import selection_rate, false_positive_rate, false_negative_rate, count
+from fairlearn.reductions import ExponentiatedGradient, DemographicParity
+
+np.random.seed(1)
+
+(dataset_orig_panel19_train,
+ dataset_orig_panel19_val,
+ dataset_orig_panel19_test) = MEPSDataset19().split([0.5, 0.8], shuffle=True)
+
+sens_ind = 0
+sens_attr = dataset_orig_panel19_train.protected_attribute_names[sens_ind]
+
+unprivileged_groups = [{sens_attr: v} for v in
+                       dataset_orig_panel19_train.unprivileged_protected_attributes[sens_ind]]
+privileged_groups = [{sens_attr: v} for v in
+                     dataset_orig_panel19_train.privileged_protected_attributes[sens_ind]]
+
+dataset_orig_panel19_train_pd = pd.DataFrame(dataset_orig_panel19_train.features, columns=dataset_orig_panel19_train.feature_names)
+race = dataset_orig_panel19_train_pd['RACE']
+
+X = dataset_orig_panel19_train.features
+y_true = dataset_orig_panel19_train.labels.ravel()
+
+classifier = DecisionTreeClassifier(min_samples_leaf=10, max_depth=4)
+classifier.fit(X, y_true)
+
+y_pred = classifier.predict(X)
+gm = MetricFrame(metrics=accuracy_score, y_true=y_true, y_pred=y_pred, sensitive_features=race)
+
+print(gm.overall)
+print(gm.by_group)
+
+sr = MetricFrame(metrics=selection_rate, y_true=y_true, y_pred=y_pred, sensitive_features=race)
+
+print(sr.overall)
+print(sr.by_group)
+
+metrics = {
+    "accuracy": accuracy_score,
+    "precision": precision_score,
+    "false positive rate": false_positive_rate,
+    "false negative rate": false_negative_rate,
+    "selection rate": selection_rate,
+    "count": count,
+}
+metric_frame = MetricFrame(
+    metrics=metrics, y_true=y_true, y_pred=y_pred, sensitive_features=race
+)
+metric_frame.by_group.plot.bar(
+    subplots=True,
+    layout=[3, 3],
+    legend=False,
+    figsize=[12, 8],
+    title="Show all metrics",
+)
+
+
+
+plt.show()
+
+
+#Mitigating disparity
+
+constraint = DemographicParity()
+classifier = DecisionTreeClassifier(min_samples_leaf=10, max_depth=4)
+mitigator = ExponentiatedGradient(classifier, constraint)
+mitigator.fit(X, y_true, sensitive_features=race)
+
+
+y_pred_mitigated = mitigator.predict(X)
+sr_mitigated = MetricFrame(metrics=selection_rate, y_true=y_true, y_pred=y_pred_mitigated, sensitive_features=race)
+
+print(sr_mitigated.overall)
+print(sr_mitigated.by_group)
+
+
+classifier = DecisionTreeClassifier(min_samples_leaf=10, max_depth=4)
+classifier.fit(X, y_true)
+
+y_pred = classifier.predict(X)
+gm = MetricFrame(metrics=accuracy_score, y_true=y_true, y_pred=y_pred_mitigated, sensitive_features=race)
+
+print(gm.overall)
+print(gm.by_group)
+
+metrics = {
+    "accuracy": accuracy_score,
+    "precision": precision_score,
+    "false positive rate": false_positive_rate,
+    "false negative rate": false_negative_rate,
+    "selection rate": selection_rate,
+    "count": count,
+}
+metric_frame = MetricFrame(
+    metrics=metrics, y_true=y_true, y_pred=y_pred_mitigated, sensitive_features=race
+)
+metric_frame.by_group.plot.bar(
+    subplots=True,
+    layout=[3, 3],
+    legend=False,
+    figsize=[12, 8],
+    title="Show all metrics",
+)
+
+plt.show()
+
+
+
